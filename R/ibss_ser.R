@@ -1,20 +1,13 @@
-# Functions for a generic IBSS algorithm
-# allows us to specify an SER function to run IBSS with...
+library(parallel)
 
-null_initialize_ibss <- function(n, p, L, prior_variance){
-  # place to store posterior info for each l = 1, ..., L
-  alpha <- matrix(1/p, nrow = L, ncol = p)
-  mu <- matrix(0, nrow = L, ncol = p)
-  var <- matrix(prior_variance, nrow = L, ncol = p)
-  init <- list(alpha = alpha, mu = mu, var = var)
-}
 
 
 #' Functions for a generic IBSS algorithm
 #' allows us to specify an SER function to run IBSS with...
 #' @param ser_function a function for fitting SER, takes arguments `X`, `y`, `o` `prior_variance`, `estimate_intercept`, and `prior_weights`
 #' @export
-ibss_from_ser <- function(X, y, Z= NULL, L = 10, prior_variance = 1., prior_weights = NULL, tol = 1e-3, maxit = 100, estimate_intercept = TRUE, ser_function = NULL) {
+ibss_from_ser <- function(X, y, Z= NULL, L = 10, prior_variance = 1., prior_weights = NULL, tol = 1e-3, maxit = 100, 
+                          estimate_intercept = TRUE, ser_function = NULL, num_cores = 1) {
   if (is.null(ser_function)) {
     stop("You need to specify a fit function `fit_glm_ser`, `fit_vb_ser`, etc")
   }
@@ -55,7 +48,8 @@ ibss_from_ser <- function(X, y, Z= NULL, L = 10, prior_variance = 1., prior_weig
                             o = fixed,
                             prior_variance = prior_vars[l],
                             estimate_intercept = estimate_intercept,
-                            prior_weights = prior_weights
+                            prior_weights = prior_weights, 
+                            num_cores = num_cores
       )
       
       # store
@@ -147,7 +141,7 @@ ibss_monitor_convergence <- function(fit) {
 #' @importFrom matrixStats logSumExp
 ser_from_univariate <- function(uni_fun) {
   # a function for fitting SER
-  ser_fun <- function(X, y, o = NULL, prior_variance, estimate_intercept = T, prior_weights = NULL, ...) {
+  ser_fun <- function(X, y, o = NULL, prior_variance, estimate_intercept = T, prior_weights = NULL, num_cores, ...) {
     # set=up
     p <- dim(X)[2]
     
@@ -157,8 +151,8 @@ ser_from_univariate <- function(uni_fun) {
     }
     
     # use uvb intercepts as fixed intercept
-    fits <- dplyr::bind_rows(purrr::map(1:p, ~ uni_fun(X[, .x], y, o, prior_variance = prior_variance, estimate_intercept = estimate_intercept, ...)))
-    
+    #fits <- dplyr::bind_rows(purrr::map(1:p, ~ uni_fun(X[, .x], y, o, prior_variance = prior_variance, estimate_intercept = estimate_intercept, ...)))
+    fits <- dplyr::bind_rows(mclapply(1:p, function(i) uni_fun(X[, i], y, o, prior_variance = prior_variance, estimate_intercept = estimate_intercept, ...), mc.cores = num_cores))
     # compute summaries
     alpha <- exp(fits$lbf - matrixStats::logSumExp(fits$lbf))
     lbf_model <- sum(alpha * fits$lbf) - categorical_kl(alpha, rep(1 / p, p))
@@ -189,54 +183,3 @@ ser_from_univariate <- function(uni_fun) {
 # fit$lbf_model
 
 
-
-#' @export
-predict.generalized_ibss <- function(fit, X){
-  psi <- with(fit, intercept + drop(X %*% colSums(alpha * mu)))[, 1]
-  return(psi)
-}
-
-#' Generalized IBSS
-#'
-#' approximate GLM SuSiE using generalized IBSS heuristic
-#' by default this is for logistic regression but you can specify
-#' what GLM to use via "family" argument
-#' dots get passed to `ibss_from_ser` see documentation for options
-#' @param X design matrix
-#' @param y response
-#' @param L number of single effects
-#' @param laplace boolean to use Laplace approximation to BF rather than ABF--
-#'  we recommend keeping set to default `TRUE`
-#' @param estimate_prior_variance boolean to estimate prior variance
-#' @param family family for glm
-#' @export
-generalized_ibss <- function(X, y, L=10, tol=1e-8, maxit=100, init=NULL, ...){
-  # make SER function for GLM, uses asymptotic approximation
-  ser_fun <- purrr::partial(fit_glm_ser, ...)
-
-  # fit IBSS using the SER function
-  ibss_from_ser(X, y, L=L, ser_function = ser_fun, tol = tol, maxit = maxit, init=init)
-}
-
-
-#' Generalized IBSS Quadrature
-#'
-#' approximate GLM SuSiE using generalized IBSS heuristic
-#' by default this is for logistic regression but you can specify
-#' what GLM to use via "family" argument
-#' dots get passed to `ibss_from_ser` see documentation for options
-#' @param X design matrix
-#' @param y response
-#' @param L number of single effects
-#' @param laplace boolean to use Laplace approximation to BF rather than ABF--
-#'  we recommend keeping set to default `TRUE`
-#' @param estimate_prior_variance boolean to estimate prior variance
-#' @param family family for glm
-#' @export
-generalized_ibss_quad <- function(X, y, L=10, tol=1e-8, maxit=100, init=NULL, ...){
-  # make SER function for GLM, uses asymptotic approximation
-  ser_fun <- purrr::partial(fit_quad_ser, ...)
-
-  # fit IBSS using the SER function
-  ibss_from_ser(X, y, L=L, ser_function = ser_fun, tol = tol, maxit = maxit, init=init)
-}
