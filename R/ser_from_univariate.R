@@ -1,33 +1,35 @@
-#' Take a function for fitting MLE of univariate regression and make an SER function
+#' Take a function for fitting univariate regression and
 #'
 #' this is a utlity function for generating SER fit function compatible with `ibss_from_ser`
 #' if you have a function for fitting a univariate regression this will create a function for fitting an SER
-#' it relied on an asymptotic approximation-- so if you have betahat, standard error, and likelihood ratio you can use this
 #'
 #' @param uni_fun a function for fitting univariate regression
-#'  must take arguments: x, y, o, estimate_intercept
+#'  must take arguments: x, y, o, prior_variance, estimate_intercept
 #'    additional arguments passed via ...
+#'    hint: it may be useful to pass null model likelihood in ...
 #'  must return: a list with items lbf = log bayes factor, mu = posterior mean, var = posterior variance, intercept=intercept
 #'    note that posterior variance doesn't figure in computations so you can set it to a dummy value (e.g. 0)
 #' @export
+#' @importFrom matrixStats logSumExp
 ser_from_univariate <- function(uni_fun) {
   # a function for fitting SER
-  ser_fun <- function(X, y, o = NULL, prior_variance = 1, estimate_prior_variance=T, estimate_intercept = T, prior_weights = NULL, ...) {
+  ser_fun <- function(X, y, o = NULL, prior_variance, estimate_intercept = T, prior_weights = NULL, ...) {
     # set=up
     p <- dim(X)[2]
-
+    
     # 0 offset if not specified
     if (is.null(o)) {
       o <- rep(0, length(y))
     }
-
+    
     # use uvb intercepts as fixed intercept
     fits <- dplyr::bind_rows(purrr::map(1:p, ~ uni_fun(X[, .x], y, o, prior_variance = prior_variance, estimate_intercept = estimate_intercept, ...)))
-
+    
     # compute summaries
     alpha <- exp(fits$lbf - matrixStats::logSumExp(fits$lbf))
     lbf_model <- sum(alpha * fits$lbf) - categorical_kl(alpha, rep(1 / p, p))
-
+    prior_variance <- sum(alpha * (fits$mu^2 + fits$var))  # E[b^2]
+    
     # return standard ouput: mu var alpha intercept, lbf
     res <- list(
       mu = fits$mu,
@@ -43,6 +45,7 @@ ser_from_univariate <- function(uni_fun) {
   }
   return(ser_fun)
 }
+
 
 
 #' Compute log of the asymptotic Bayes factor (ABF) for the SER vs null model
